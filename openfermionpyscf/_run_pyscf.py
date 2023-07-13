@@ -180,10 +180,35 @@ def run_pyscf(molecule,
         pyscf_scf = scf.UHF(pyscf_molecule)
         pyscf_scf.conv_tol = 1e-6
         pyscf_scf.verbose = 0
-        if guess_mix:
-            pyscf_scf.run(mixed_orbitals_density_matrix(pyscf_molecule))
+
+        # UHF calculation
+        pyscf_scf = scf.UHF(pyscf_molecule)
+        pyscf_scf.conv_tol = 1e-6
+        pyscf_scf.verbose = 0
+
+        dm = mixed_orbitals_density_matrix(pyscf_molecule) if guess_mix else None
+
+        # stability analysis
+        mf_uhf = pyscf_scf.run(dm)
+        new_mo = mf_uhf.stability()[0]
+        j = 0
+        Max_attempts = 5
+        # log = lib.logger.new_logger(mf)
+        mo_diff = numpy.linalg.norm(mf_uhf.mo_coeff[0] - new_mo[0]) + numpy.linalg.norm(
+            mf_uhf.mo_coeff[1] - new_mo[1])
+        while (mo_diff > 1e-5) and (j < Max_attempts):
+            print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
+            new_dm = mf_uhf.make_rdm1(new_mo, mf_uhf.mo_occ)
+            mf_uhf.run(new_dm)
+            new_mo = mf_uhf.stability()[0]
+            mo_diff = numpy.linalg.norm(mf_uhf.mo_coeff[0] - new_mo[0]) + numpy.linalg.norm(
+                mf_uhf.mo_coeff[1] - new_mo[1])
+            j += 1
+        if mo_diff > 1e-5:
+            print("Unable to find a stable SCF solution after %d attempts." % (j + 1))
         else:
-            pyscf_scf.run()
+            print("SCF solution is internally stable.")
+
 
         # Calculation of natural orbitals
         dm_uhf = pyscf_scf.make_rdm1(pyscf_scf.mo_coeff, pyscf_scf.mo_occ)
