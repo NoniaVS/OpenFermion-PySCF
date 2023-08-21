@@ -178,41 +178,42 @@ def run_pyscf(molecule,
     if nat_orb:
         # UHF calculation
         pyscf_scf = scf.UHF(pyscf_molecule)
+
+        # parameters
         pyscf_scf.conv_tol = 1e-6
+        # pyscf_scf.conv_tol_grad = numpy.sqrt(1e-6)
+        # pyscf_scf.direct_scf_tol = 1e-13
         pyscf_scf.verbose = 0
 
-        # UHF calculation
-        pyscf_scf = scf.UHF(pyscf_molecule)
-        pyscf_scf.conv_tol = 1e-6
-        pyscf_scf.verbose = 0
-
+        # define initial guess
         dm = mixed_orbitals_density_matrix(pyscf_molecule) if guess_mix else None
 
         # stability analysis
-        mf_uhf = pyscf_scf.run(dm)
-        new_mo = mf_uhf.stability()[0]
-        j = 0
-        Max_attempts = 5
-        # log = lib.logger.new_logger(mf)
-        mo_diff = numpy.linalg.norm(mf_uhf.mo_coeff[0] - new_mo[0]) + numpy.linalg.norm(
-            mf_uhf.mo_coeff[1] - new_mo[1])
-        while (mo_diff > 1e-5) and (j < Max_attempts):
+        max_attempts = 5
+        max_mo_diff = 1e-5
+        for j in range(max_attempts):
             print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
-            new_dm = mf_uhf.make_rdm1(new_mo, mf_uhf.mo_occ)
-            mf_uhf.run(new_dm)
-            new_mo = mf_uhf.stability()[0]
-            mo_diff = numpy.linalg.norm(mf_uhf.mo_coeff[0] - new_mo[0]) + numpy.linalg.norm(
-                mf_uhf.mo_coeff[1] - new_mo[1])
-            j += 1
-        if mo_diff > 1e-5:
-            print("Unable to find a stable SCF solution after %d attempts." % (j + 1))
-        else:
-            print("SCF solution is internally stable.")
 
+            pyscf_scf = pyscf_scf.run(dm)
+            ref_mo = pyscf_scf.mo_coeff
+
+            new_mo = pyscf_scf.stability()[0]
+            mo_diff = numpy.linalg.norm(ref_mo[0] - new_mo[0]) + \
+                      numpy.linalg.norm(ref_mo[1] - new_mo[1])
+
+            print('mo_diff: {:10.6e}'.format(mo_diff) + ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*pyscf_scf.spin_square()))
+
+            dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
+
+            if mo_diff < max_mo_diff:
+                print("SCF solution is internally stable.")
+                break
+
+            if j+1 >= max_attempts:
+                print("Unable to find a stable SCF solution after {} attempts.".format(max_attempts))
 
         # Calculation of natural orbitals
-        dm_uhf = pyscf_scf.make_rdm1(pyscf_scf.mo_coeff, pyscf_scf.mo_occ)
-        dm_tot = dm_uhf[0] + dm_uhf[1]
+        dm_tot = dm[0] + dm[1]
         overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
         nat_occ, nat_coeff = scipy.linalg.eigh(a=dm_tot, b=overlap_matrix, type=2)
 
