@@ -174,6 +174,16 @@ def run_pyscf(molecule,
     molecule.n_qubits = 2 * molecule.n_orbitals
     molecule.nuclear_repulsion = float(pyscf_molecule.energy_nuc())
 
+    if nat_orb:
+        print('----------------------')
+        print('UHF calculation with stabilization, then finding NOs ')
+        print('Using guessed mixed as initial point') if guess_mix else print('Not using guessed mixed')
+        print('----------------------')
+    else:
+        print('----------------------')
+        print('RHF calculation')
+        print('----------------------')
+
     # Run SCF.
     if nat_orb:
         # UHF calculation
@@ -191,6 +201,7 @@ def run_pyscf(molecule,
         # stability analysis
         max_attempts = 5
         max_mo_diff = 1e-5
+        print('Starting stability analysis')
         for j in range(max_attempts):
             print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
 
@@ -202,7 +213,7 @@ def run_pyscf(molecule,
                       numpy.linalg.norm(ref_mo[1] - new_mo[1])
 
             print('mo_diff: {:10.6e}'.format(mo_diff) + ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*pyscf_scf.spin_square()))
-
+            spin = pyscf_scf.spin_square()
             dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
 
             if mo_diff < max_mo_diff:
@@ -211,7 +222,8 @@ def run_pyscf(molecule,
 
             if j+1 >= max_attempts:
                 print("Unable to find a stable SCF solution after {} attempts.".format(max_attempts))
-
+        print('The spin of the wavefuction is' ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
+        print('----------------------')
         # Calculation of natural orbitals
         dm_tot = dm[0] + dm[1]
         overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
@@ -239,6 +251,7 @@ def run_pyscf(molecule,
     # Populate fields.
     if nat_orb:
         molecule.canonical_orbitals = nat_coeff.astype(float)
+
     else:
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
         molecule.orbital_energies = pyscf_scf.mo_energy.astype(float)
@@ -295,6 +308,7 @@ def run_pyscf(molecule,
         if verbose:
             print('FCI energy for {} ({} electrons) is {}.'.format(
                 molecule.name, molecule.n_electrons, molecule.fci_energy))
+            print('----------------------')
 
     # Return updated molecule instance.
     pyscf_molecular_data = PyscfMolecularData.__new__(PyscfMolecularData)
