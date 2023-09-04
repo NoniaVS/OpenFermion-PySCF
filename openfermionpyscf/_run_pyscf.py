@@ -232,14 +232,14 @@ def run_pyscf(molecule,
         # Ordering by occupancies
         idx = nat_occ.argsort()[::-1]
         nat_coeff = nat_coeff[:, idx]
-
+        print('ENERGY HF CALCULATED', pyscf_scf.e_tot)
     pyscf_scf = compute_scf(pyscf_molecule)
     pyscf_scf.verbose = 0
     pyscf_scf.run()
 
     molecule.hf_energy = float(pyscf_scf.e_tot)
     if verbose:
-        print('Hartree-Fock energy for {} ({} electrons) is {}.'.format(
+        print('RESTRICTED Hartree-Fock energy for {} ({} electrons) is {}.'.format(
             molecule.name, molecule.n_electrons, molecule.hf_energy))
 
     # Hold pyscf data in molecule. They are required to compute density
