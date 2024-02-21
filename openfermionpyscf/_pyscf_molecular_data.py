@@ -283,3 +283,17 @@ class PyscfMolecularData(MolecularData):
             self._ccsd_double_amps[no:,:no,no:,:no] = .5 * t2.transpose(2,0,3,1)
 
         return self._ccsd_double_amps
+
+    @property
+    def canonical_natural_trans_mat(self):
+        r""" 1rdm transformation matrix between natural orbitals and canonical
+        orbitals basis [Canonical -> Natural]
+        nat_one_rdm = trans_mat @ canonical_one_rdm @ trans_mat.T
+        """
+        nat_orb = self.canonical_orbitals
+        can_orb = self._pyscf_data['scf'].mo_coeff
+
+        overlap_matrix = self._pyscf_data['scf'].get_ovlp(self._pyscf_data['mol'])
+        trans_mat = numpy.dot(nat_orb.T, overlap_matrix @ can_orb)
+
+        return trans_mat
