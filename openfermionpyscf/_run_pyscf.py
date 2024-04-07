@@ -201,18 +201,23 @@ def run_pyscf(molecule,
         # stability analysis
         max_attempts = 5
         max_mo_diff = 1e-5
-        print('Starting stability analysis')
+
+        if verbose:
+            print('Starting stability analysis')
         for j in range(max_attempts):
-            print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
+            if verbose:
+                print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
 
             pyscf_scf = pyscf_scf.run(dm)
             ref_mo = pyscf_scf.mo_coeff
+            energies_uhf = pyscf_scf.mo_energy
 
             new_mo = pyscf_scf.stability()[0]
             mo_diff = numpy.linalg.norm(ref_mo[0] - new_mo[0]) + \
                       numpy.linalg.norm(ref_mo[1] - new_mo[1])
 
-            print('mo_diff: {:10.6e}'.format(mo_diff) + ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*pyscf_scf.spin_square()))
+            if verbose:
+                print('mo_diff: {:10.6e}'.format(mo_diff) + ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*pyscf_scf.spin_square()))
             spin = pyscf_scf.spin_square()
             dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
 
@@ -222,17 +227,23 @@ def run_pyscf(molecule,
 
             if j+1 >= max_attempts:
                 print("Unable to find a stable SCF solution after {} attempts.".format(max_attempts))
-        print('The spin of the wavefuction is' ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
-        print('----------------------')
+
+        if verbose:
+            print('The spin of the wavefuction is' ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
+            print('----------------------')
+
         # Calculation of natural orbitals
         dm_tot = dm[0] + dm[1]
         overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
         nat_occ, nat_coeff = scipy.linalg.eigh(a=dm_tot, b=overlap_matrix, type=2)
 
         # Ordering by occupancies
-        idx = nat_occ.argsort()[::-1]
+        nat_occ = nat_occ[::-1]
+        idx = nat_occ.argsort()
         nat_coeff = nat_coeff[:, idx]
-        print('ENERGY HF CALCULATED', pyscf_scf.e_tot)
+        if verbose:
+            print('ENERGY UHF CALCULATED', pyscf_scf.e_tot)
+
     pyscf_scf = compute_scf(pyscf_molecule)
     pyscf_scf.verbose = 0
     pyscf_scf.run()
@@ -251,6 +262,7 @@ def run_pyscf(molecule,
     # Populate fields.
     if nat_orb:
         molecule.canonical_orbitals = nat_coeff.astype(float)
+        molecule.orbital_energies = nat_occ.astype(float)
 
     else:
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
@@ -302,12 +314,20 @@ def run_pyscf(molecule,
     # Run FCI.
     if run_fci:
         pyscf_fci = fci.FCI(pyscf_molecule, pyscf_scf.mo_coeff)
-        pyscf_fci.verbose = 0
-        molecule.fci_energy = pyscf_fci.kernel()[0]
+        spin = (molecule.multiplicity - 1)//2
+        pyscf_fci.spin = spin # s2 s(s+1)
+        s2 = spin*(spin+1)
+
+        fci.addons.fix_spin_(pyscf_fci, shift=0.1, ss=s2)  # s2
+        molecule.fci_energy, fcivec = pyscf_fci.kernel()
         pyscf_data['fci'] = pyscf_fci
         if verbose:
             print('FCI energy for {} ({} electrons) is {}.'.format(
                 molecule.name, molecule.n_electrons, molecule.fci_energy))
+            print('E = %.12f  2S+1 = %.7f' %
+                  (molecule.fci_energy, pyscf_fci.spin_square(fcivec,
+                                                              molecule.n_orbitals,
+                                                              molecule.n_electrons)[1]))
             print('----------------------')
 
     # Return updated molecule instance.
