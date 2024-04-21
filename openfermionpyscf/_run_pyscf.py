@@ -143,6 +143,20 @@ def compute_integrals(pyscf_molecule, orb_coeff):
     return one_electron_integrals, two_electron_integrals
 
 
+def set_mo_coefficients(molecule, mo_coefficients):
+    """
+    overwrite molecular orbitals coefficients of a MolecularData object and recompute one/two boy integrals
+
+    :param molecule: MolecularData object
+    :param mo_coefficients: Molecular Orbitals matrix (MO in columns)
+    :return:
+    """
+    one_body_integrals, two_body_integrals = compute_integrals(molecule._pyscf_data['mol'], mo_coefficients)
+    molecule._one_body_integrals = one_body_integrals
+    molecule._two_body_integrals = two_body_integrals
+    molecule._canonical_orbitals = mo_coefficients
+
+
 def run_pyscf(molecule,
               nat_orb=False,
               guess_mix=False,

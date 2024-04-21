@@ -19,6 +19,8 @@ from ._pyscf_molecular_data import PyscfMolecularData
 from ._run_pyscf import (
         generate_molecular_hamiltonian,
         prepare_pyscf_molecule,
-        run_pyscf)
+        run_pyscf,
+        set_mo_coefficients
+        )
 
 from ._version import __version__
