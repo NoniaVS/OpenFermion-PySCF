@@ -18,7 +18,7 @@ from functools import reduce
 
 import numpy
 import scipy
-from pyscf import gto, scf, ao2mo, ci, cc, fci, mp
+from pyscf import gto, scf, ao2mo, ci, cc, fci, mp, mcscf
 
 from openfermion import MolecularData
 from openfermionpyscf import PyscfMolecularData
@@ -143,6 +143,37 @@ def compute_integrals(pyscf_molecule, orb_coeff):
     return one_electron_integrals, two_electron_integrals
 
 
+def compute_integrals_casci(casci, frozen_core, n_orbitals):
+    """
+    Compute the effective 1-electron, 2-electron integrals with frozen core approach
+
+    Args:
+        casci: A pyscf "CASCI" calculation object
+        frozen_core: number of frozen molecular orbitals
+
+    Returns:
+        one_electron_integrals: An N by N array storing h_{pq}
+        two_electron_integrals: An N by N by N by N array storing h_{pqrs}
+    """
+
+    # Get one electrons integrals.
+    #n_orbitals = casci.mo_coeff.shape[1] - frozen_core
+    print('n_orbitals: ', n_orbitals)
+
+    # get effective electronic integrals
+    one_electron_integrals, nuclear_repulsion = casci.get_h1eff()
+    two_electron_compressed = casci.get_h2eff()
+
+    two_electron_integrals = ao2mo.restore(1, two_electron_compressed, n_orbitals)
+
+    # See PQRS convention in OpenFermion.hamiltonians._molecular_data
+    # h[p,q,r,s] = (ps|qr)
+    two_electron_integrals = numpy.asarray(
+        two_electron_integrals.transpose(0, 2, 3, 1), order='C')
+
+    return one_electron_integrals, two_electron_integrals, nuclear_repulsion
+
+
 def set_mo_coefficients(molecule, mo_coefficients):
     """
     overwrite molecular orbitals coefficients of a MolecularData object and recompute one/two boy integrals
@@ -160,6 +191,8 @@ def set_mo_coefficients(molecule, mo_coefficients):
 def run_pyscf(molecule,
               nat_orb=False,
               guess_mix=False,
+              frozen_core=0,
+              n_orbitals=None,
               run_scf=True,
               run_mp2=False,
               run_cisd=False,
@@ -182,6 +215,8 @@ def run_pyscf(molecule,
         molecule: The updated PyscfMolecularData object. Note the attributes
         of the input molecule are also updated in this function.
     """
+    n_orbitals_max = n_orbitals
+
     # Prepare pyscf molecule.
     pyscf_molecule = prepare_pyscf_molecule(molecule)
     molecule.n_orbitals = int(pyscf_molecule.nao_nr())
@@ -277,13 +312,35 @@ def run_pyscf(molecule,
     if nat_orb:
         molecule.canonical_orbitals = nat_coeff.astype(float)
         molecule.orbital_energies = nat_occ.astype(float)
-
+        pyscf_scf.mo_coeff = molecule.canonical_orbitals
     else:
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
         molecule.orbital_energies = pyscf_scf.mo_energy.astype(float)
 
-    # Get integrals.
-    one_body_integrals, two_body_integrals = compute_integrals(pyscf_molecule, molecule.canonical_orbitals)
+    if frozen_core > 0 or n_orbitals_max is not None:
+
+        if n_orbitals_max is None:
+            n_orbitals_max = molecule.n_orbitals
+        # get CASCI MO effective integrals (frozen core)
+        n_cas_elec = molecule.n_electrons - frozen_core*2
+
+        if n_cas_elec < 0:
+            raise Exception('cannot freeze more electrons than orbitals')
+
+        if n_orbitals_max - frozen_core < 0:
+            raise Exception('n_orbital should be larger than frozen_core')
+
+        if n_orbitals_max > molecule.n_orbitals:
+            n_orbitals_max = molecule.n_orbitals
+
+        casci = mcscf.CASCI(pyscf_scf, n_orbitals_max - frozen_core, n_cas_elec)
+
+        one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, frozen_core, n_orbitals_max - frozen_core)
+        molecule.nuclear_repulsion = nuclear
+    else:
+        # Get MO integrals.
+        one_body_integrals, two_body_integrals = compute_integrals(pyscf_molecule, molecule.canonical_orbitals)
+
     molecule.one_body_integrals = one_body_integrals
     molecule.two_body_integrals = two_body_integrals
     molecule.overlap_integrals = pyscf_scf.get_ovlp()
