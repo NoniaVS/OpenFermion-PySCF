@@ -143,22 +143,18 @@ def compute_integrals(pyscf_molecule, orb_coeff):
     return one_electron_integrals, two_electron_integrals
 
 
-def compute_integrals_casci(casci, frozen_core, n_orbitals):
+def compute_integrals_casci(casci, n_orbitals):
     """
     Compute the effective 1-electron, 2-electron integrals with frozen core approach
 
     Args:
         casci: A pyscf "CASCI" calculation object
-        frozen_core: number of frozen molecular orbitals
+        n_orbitals: number of CAS orbitals
 
     Returns:
         one_electron_integrals: An N by N array storing h_{pq}
         two_electron_integrals: An N by N by N by N array storing h_{pqrs}
     """
-
-    # Get one electrons integrals.
-    #n_orbitals = casci.mo_coeff.shape[1] - frozen_core
-    print('n_orbitals: ', n_orbitals)
 
     # get effective electronic integrals
     one_electron_integrals, nuclear_repulsion = casci.get_h1eff()
@@ -335,7 +331,10 @@ def run_pyscf(molecule,
 
         casci = mcscf.CASCI(pyscf_scf, n_orbitals_max - frozen_core, n_cas_elec)
 
-        one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, frozen_core, n_orbitals_max - frozen_core)
+        if verbose:
+            molecule.casci_energy = casci.kernel()[0]
+
+        one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, n_orbitals_max - frozen_core)
         molecule.nuclear_repulsion = nuclear
     else:
         # Get MO integrals.
