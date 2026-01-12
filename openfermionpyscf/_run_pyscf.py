@@ -143,6 +143,36 @@ def compute_integrals(pyscf_molecule, orb_coeff):
     return one_electron_integrals, two_electron_integrals
 
 
+def create_fcidump_file(casci, filename):
+    from pyscf.tools import fcidump
+
+    ncas = casci.ncas
+    nelecas = sum(casci.nelecas)  # total number of active electrons
+    mo_coeff = casci.mo_coeff[:, casci.ncore: casci.ncore + ncas]
+
+    # Integrals d'un i dos electrons a l'espai actiu
+    h1e = casci.get_h1eff()
+    h1e, nuc = casci.get_h1eff()
+
+    eri = ao2mo.kernel(casci.mol, mo_coeff, compact=False).reshape((ncas,) * 4)
+
+    # Energia nuclear (des del mol intern)
+    # nuc = casci.mol.energy_nuc()
+
+    # Spin total (ms = 2S)
+    ms = casci.mol.spin
+
+    # Escriu el fitxer FCIDUMP
+    fcidump.from_integrals(
+        filename,
+        h1e,
+        eri,
+        ncas,
+        nelecas,
+        nuc=nuc,
+        ms=ms
+    )
+
 def compute_integrals_casci(casci, n_orbitals):
     """
     Compute the effective 1-electron, 2-electron integrals with frozen core approach
@@ -166,6 +196,8 @@ def compute_integrals_casci(casci, n_orbitals):
     # h[p,q,r,s] = (ps|qr)
     two_electron_integrals = numpy.asarray(
         two_electron_integrals.transpose(0, 2, 3, 1), order='C')
+
+    # create_fcidump_file(casci, '/Users/abel/FCIDUMP_ref')
 
     return one_electron_integrals, two_electron_integrals, nuclear_repulsion
 
@@ -330,6 +362,7 @@ def run_pyscf(molecule,
             n_orbitals_max = molecule.n_orbitals
 
         casci = mcscf.CASCI(pyscf_scf, n_orbitals_max - frozen_core, n_cas_elec)
+        pyscf_data['casci'] = casci
 
         if verbose:
             molecule.casci_energy = casci.kernel()[0]
@@ -372,7 +405,12 @@ def run_pyscf(molecule,
 
     # Run CCSD.
     if run_ccsd:
-        pyscf_ccsd = cc.CCSD(pyscf_scf)
+        frozen_orbitals = list(range(frozen_core))
+        # print('jojo', n_orbitals, n_orbitals_max, molecule.n_orbitals)
+        if n_orbitals is not None:
+            frozen_orbitals += list(range(n_orbitals, molecule.n_orbitals))
+        # print('frozen CCSD orbitals: ', frozen_orbitals)
+        pyscf_ccsd = cc.CCSD(pyscf_scf, frozen=frozen_orbitals)
         pyscf_ccsd.verbose = 0
         pyscf_ccsd.run()
         molecule.ccsd_energy = pyscf_ccsd.e_tot
