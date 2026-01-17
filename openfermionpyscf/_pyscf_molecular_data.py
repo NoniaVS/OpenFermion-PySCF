@@ -224,7 +224,7 @@ class PyscfMolecularData(MolecularData):
                 raise ValueError('Spin trace for UHF-FCI density matrices.')
 
             norb = self.canonical_orbitals.shape[1]
-            nelec = self.n_electrons
+            nelec = self.hf_electrons
             self._fci_one_rdm = fci.make_rdm1(fci.ci, norb, nelec).T
         return self._fci_one_rdm
 
@@ -243,7 +243,7 @@ class PyscfMolecularData(MolecularData):
                 raise ValueError('Spin trace for UHF-FCI density matrix.')
 
             norb = self.canonical_orbitals.shape[1]
-            nelec = self.n_electrons
+            nelec = self.hf_electrons
             fci_rdm2 = fci.make_rdm2(fci.ci, norb, nelec)
             self._fci_two_rdm = fci_rdm2.transpose(0, 2, 3, 1)
         return self._fci_two_rdm

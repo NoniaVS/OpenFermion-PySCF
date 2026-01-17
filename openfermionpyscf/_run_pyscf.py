@@ -225,6 +225,7 @@ def run_pyscf(molecule,
               run_mp2=False,
               run_cisd=False,
               run_ccsd=False,
+              run_casci=False,
               run_fci=False,
               verbose=False):
     """
@@ -236,6 +237,7 @@ def run_pyscf(molecule,
         run_mp2: Optional boolean to run MP2 calculation.
         run_cisd: Optional boolean to run CISD calculation.
         run_ccsd: Optional boolean to run CCSD calculation.
+        run_casci: Optional boolean to run CASCI calculation.
         run_fci: Optional boolean to FCI calculation.
         verbose: Boolean whether to print calculation results to screen.
 
@@ -248,7 +250,6 @@ def run_pyscf(molecule,
     # Prepare pyscf molecule.
     pyscf_molecule = prepare_pyscf_molecule(molecule)
     molecule.n_orbitals = int(pyscf_molecule.nao_nr())
-    molecule.n_qubits = 2 * molecule.n_orbitals
     molecule.nuclear_repulsion = float(pyscf_molecule.energy_nuc())
 
     if nat_orb:
@@ -322,13 +323,28 @@ def run_pyscf(molecule,
             print('ENERGY UHF CALCULATED', pyscf_scf.e_tot)
 
     pyscf_scf = compute_scf(pyscf_molecule)
+
+    # redefine n_orbitals and n_electrons to match output active space
+    n_orbitals_hf = molecule.n_orbitals
+
+    molecule.hf_electrons = molecule.n_electrons
+    if n_orbitals is None:
+        n_orbitals = n_orbitals_hf
+
+    if n_orbitals > n_orbitals_hf:
+        n_orbitals = n_orbitals_hf
+
+    molecule.n_orbitals = n_orbitals - frozen_core
+    molecule.n_electrons = molecule.n_electrons - frozen_core*2
+    molecule.n_qubits = 2 * molecule.n_orbitals
+
     pyscf_scf.verbose = 0
     pyscf_scf.run()
 
     molecule.hf_energy = float(pyscf_scf.e_tot)
     if verbose:
         print('RESTRICTED Hartree-Fock energy for {} ({} electrons) is {}.'.format(
-            molecule.name, molecule.n_electrons, molecule.hf_energy))
+            molecule.name, molecule.hf_electrons, molecule.hf_energy))
 
     # Hold pyscf data in molecule. They are required to compute density
     # matrices and other quantities.
@@ -345,29 +361,26 @@ def run_pyscf(molecule,
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
         molecule.orbital_energies = pyscf_scf.mo_energy.astype(float)
 
-    if frozen_core > 0 or n_orbitals_max is not None:
+    molecule.casci_energy = None
+    if frozen_core > 0 or n_orbitals is not None:
 
-        if n_orbitals_max is None:
-            n_orbitals_max = molecule.n_orbitals
+
         # get CASCI MO effective integrals (frozen core)
-        n_cas_elec = molecule.n_electrons - frozen_core*2
+        n_cas_elec = molecule.n_electrons
 
         if n_cas_elec < 0:
             raise Exception('cannot freeze more electrons than orbitals')
 
-        if n_orbitals_max - frozen_core < 0:
+        if molecule.n_orbitals < 0:
             raise Exception('n_orbital should be larger than frozen_core')
 
-        if n_orbitals_max > molecule.n_orbitals:
-            n_orbitals_max = molecule.n_orbitals
-
-        casci = mcscf.CASCI(pyscf_scf, n_orbitals_max - frozen_core, n_cas_elec)
+        casci = mcscf.CASCI(pyscf_scf, molecule.n_orbitals, n_cas_elec)
         pyscf_data['casci'] = casci
 
-        if verbose:
+        if run_casci:
             molecule.casci_energy = casci.kernel()[0]
 
-        one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, n_orbitals_max - frozen_core)
+        one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, molecule.n_orbitals)
         molecule.nuclear_repulsion = nuclear
     else:
         # Get MO integrals.
@@ -390,7 +403,7 @@ def run_pyscf(molecule,
             pyscf_data['mp2'] = pyscf_mp2
             if verbose:
                 print('MP2 energy for {} ({} electrons) is {}.'.format(
-                    molecule.name, molecule.n_electrons, molecule.mp2_energy))
+                    molecule.name, molecule.hf_electrons, molecule.mp2_energy))
 
     # Run CISD.
     if run_cisd:
@@ -401,14 +414,15 @@ def run_pyscf(molecule,
         pyscf_data['cisd'] = pyscf_cisd
         if verbose:
             print('CISD energy for {} ({} electrons) is {}.'.format(
-                molecule.name, molecule.n_electrons, molecule.cisd_energy))
+                molecule.name, molecule.hf_electrons, molecule.cisd_energy))
 
     # Run CCSD.
     if run_ccsd:
         frozen_orbitals = list(range(frozen_core))
-        # print('jojo', n_orbitals, n_orbitals_max, molecule.n_orbitals)
+
         if n_orbitals is not None:
-            frozen_orbitals += list(range(n_orbitals, molecule.n_orbitals))
+            frozen_orbitals += list(range(n_orbitals, n_orbitals_hf))
+
         # print('frozen CCSD orbitals: ', frozen_orbitals)
         pyscf_ccsd = cc.CCSD(pyscf_scf, frozen=frozen_orbitals)
         pyscf_ccsd.verbose = 0
@@ -431,11 +445,11 @@ def run_pyscf(molecule,
         pyscf_data['fci'] = pyscf_fci
         if verbose:
             print('FCI energy for {} ({} electrons) is {}.'.format(
-                molecule.name, molecule.n_electrons, molecule.fci_energy))
+                molecule.name, molecule.hf_electrons, molecule.fci_energy))
             print('E = %.12f  2S+1 = %.7f' %
                   (molecule.fci_energy, pyscf_fci.spin_square(fcivec,
-                                                              molecule.n_orbitals,
-                                                              molecule.n_electrons)[1]))
+                                                              n_orbitals_hf,
+                                                              molecule.hf_electrons)[1]))
             print('----------------------')
 
     # Return updated molecule instance.
