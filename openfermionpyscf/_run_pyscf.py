@@ -218,6 +218,7 @@ def set_mo_coefficients(molecule, mo_coefficients):
 
 def run_pyscf(molecule,
               nat_orb=False,
+              loc_boys=False,
               guess_mix=False,
               frozen_core=0,
               n_orbitals=None,
@@ -357,6 +358,18 @@ def run_pyscf(molecule,
         molecule.canonical_orbitals = nat_coeff.astype(float)
         molecule.orbital_energies = nat_occ.astype(float)
         pyscf_scf.mo_coeff = molecule.canonical_orbitals
+    # localize boys
+    elif loc_boys:
+        from pyscf import lo
+        if verbose:
+            print('Localized orbitals with Boys')
+
+        loc_coeff= lo.orth_ao(pyscf_scf, 'nao')
+        F = pyscf_scf.get_fock()
+        eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+
+        molecule.canonical_orbitals = loc_coeff.astype(float)
+        molecule.orbital_energies = eps_local.astype(float)
     else:
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
         molecule.orbital_energies = pyscf_scf.mo_energy.astype(float)
