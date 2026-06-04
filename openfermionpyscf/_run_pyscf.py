@@ -441,10 +441,16 @@ def run_pyscf(molecule,
         pyscf_ccsd.verbose = 0
         pyscf_ccsd.run()
         molecule.ccsd_energy = pyscf_ccsd.e_tot
-        pyscf_data['ccsd'] = pyscf_ccsd
         if verbose:
             print('CCSD energy for {} ({} electrons) is {}.'.format(
                 molecule.name, molecule.n_electrons, molecule.ccsd_energy))
+
+        if isinstance(pyscf_scf, scf.rohf.ROHF):
+            import warnings
+            warnings.warn('CCSD amplitudes are not generated for multiplicity > 1')
+        else:
+            pyscf_data['ccsd'] = pyscf_ccsd
+
 
     # Run FCI.
     if run_fci:
