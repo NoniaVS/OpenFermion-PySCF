@@ -18,7 +18,7 @@ from functools import reduce
 
 import numpy
 import scipy
-from pyscf import gto, scf, ao2mo, ci, cc, fci, mp, mcscf
+from pyscf import gto, scf, ao2mo, ci, cc, fci, mp, mcscf, dft
 
 from openfermion import MolecularData
 from openfermionpyscf import PyscfMolecularData
@@ -59,6 +59,40 @@ def compute_scf(pyscf_molecule):
         pyscf_scf = scf.ROHF(pyscf_molecule)
     else:
         pyscf_scf = scf.RHF(pyscf_molecule)
+
+    pyscf_scf.verbose = 0
+    pyscf_scf.run()
+
+    return pyscf_scf
+
+
+def compute_scf_dft(pyscf_molecule):
+    """
+    Perform a DFT calculation.
+
+    Args:
+        pyscf_molecule: A pyscf molecule instance.
+
+    Returns:
+        pyscf_scf: A PySCF "SCF" calculation object.
+    """
+    from pyscf import dft
+
+    if pyscf_molecule.spin:
+        pyscf_dft = dft.ROKS(pyscf_molecule)
+    else:
+        pyscf_dft = dft.RKS(pyscf_molecule)
+
+    # Additional paramters
+    pyscf_dft.xc = 'lda,vwn'  # default
+    pyscf_dft = pyscf_dft.newton()  # second-order algortihm
+
+    pyscf_dft.verbose = 0
+    pyscf_dft.run()
+
+    # convert to SCF
+    pyscf_scf = pyscf_dft.to_hf()
+
     return pyscf_scf
 
 
@@ -311,6 +345,7 @@ def run_pyscf(molecule,
               frozen_core=0,
               n_orbitals=None,
               run_scf=True,
+              reference='HF',
               run_mp2=False,
               run_cisd=False,
               run_ccsd=False,
@@ -342,17 +377,22 @@ def run_pyscf(molecule,
     molecule.nuclear_repulsion = float(pyscf_molecule.energy_nuc())
 
     # ------------------------------------------------------------------
-    # RHF/ROHF reference calculation
+    # Reference calculation
     # ------------------------------------------------------------------
-    pyscf_scf = compute_scf(pyscf_molecule)
-    pyscf_scf.verbose = 0
-    pyscf_scf.run()
+    if reference == 'HF':
+        print('Use HF reference')
+        pyscf_scf = compute_scf(pyscf_molecule)  # HF
+    elif reference == 'DFT':
+        print('Use DFT reference')
+        pyscf_scf = compute_scf_dft(pyscf_molecule) # DFT
+    else:
+        raise ValueError('Unknown reference calculation: {}'.format(reference))
 
     molecule.hf_electrons = molecule.n_electrons
     molecule.hf_energy = float(pyscf_scf.e_tot)
 
     if verbose:
-        print('Restricted Hartree-Fock energy for {} ({} electrons) is {}.'.format(
+        print('Restricted reference energy for {} ({} electrons) is {}.'.format(
             molecule.name, molecule.hf_electrons, molecule.hf_energy))
 
     # ------------------------------------------------------------------
@@ -468,6 +508,7 @@ def run_pyscf(molecule,
     if run_ccsd:
 
         # print('frozen CCSD orbitals: ', frozen_orbitals)
+
         pyscf_ccsd = cc.CCSD(pyscf_scf, frozen=frozen_orbitals)
         pyscf_ccsd.verbose = 0
         pyscf_ccsd.run()
