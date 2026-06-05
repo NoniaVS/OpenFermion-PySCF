@@ -216,6 +216,94 @@ def set_mo_coefficients(molecule, mo_coefficients):
     molecule._canonical_orbitals = mo_coefficients
 
 
+def _compute_natural_orbitals(pyscf_molecule,
+                               guess_mix=False,
+                               verbose=False,
+                               max_attempts=5,
+                               max_mo_diff=1e-5):
+    """
+    Run a UHF calculation with stability analysis and return natural orbitals.
+
+    Returns
+    -------
+    nat_coeff : ndarray   Natural-orbital coefficients (columns), ordered by
+                          descending occupation.
+    nat_occ   : ndarray   Natural-orbital occupancies (descending).
+    """
+    pyscf_scf = scf.UHF(pyscf_molecule)
+    pyscf_scf.conv_tol = 1e-6
+    pyscf_scf.verbose = 0
+
+    dm = mixed_orbitals_density_matrix(pyscf_molecule) if guess_mix else None
+
+    if verbose:
+        print('Starting UHF stability analysis')
+
+    for attempt in range(1, max_attempts + 1):
+        if verbose:
+            print(f'  Stability attempt {attempt}/{max_attempts}')
+
+        pyscf_scf = pyscf_scf.run(dm)
+        ref_mo = pyscf_scf.mo_coeff
+        new_mo = pyscf_scf.stability()[0]
+
+        mo_diff = (numpy.linalg.norm(ref_mo[0] - new_mo[0])
+                   + numpy.linalg.norm(ref_mo[1] - new_mo[1]))
+        spin = pyscf_scf.spin_square()
+
+        if verbose:
+            print('  mo_diff: {:10.6e}  S²: {:5.3f}  2S+1: {:5.3f}'.format(mo_diff, *spin))
+
+        dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
+
+        if mo_diff < max_mo_diff:
+            print('SCF solution is internally stable.')
+            break
+    else:
+        print(f'Unable to find a stable SCF solution after {max_attempts} attempts.')
+
+    if verbose:
+        print('Final spin  S²: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
+
+
+    # Natural orbitals from the UHF density matrix
+    if verbose:
+        print('Natural orbitals from UHF')
+
+    dm_tot = dm[0] + dm[1]
+    overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
+    nat_occ, nat_coeff = scipy.linalg.eigh(a=dm_tot, b=overlap_matrix, type=2)
+
+    # Sort by descending occupancy
+    order = numpy.argsort(nat_occ)[::-1]
+    nat_occ = nat_occ[order]
+    nat_coeff = nat_coeff[:, order]
+
+    if verbose:
+        print(f'UHF total energy: {pyscf_scf.e_tot}')
+
+    return nat_coeff, nat_occ
+
+
+def _compute_boys_loc_orbitals(pyscf_scf, verbose=False):
+    """
+    compute localized orbitals using boys
+
+    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
+    eps_local : ndarray   Boys localized orbital energies (descending).
+
+    """
+    if verbose:
+        print('Localized orbitals with Boys')
+
+    from pyscf import lo
+    loc_coeff = lo.orth_ao(pyscf_scf, 'nao')
+    F = pyscf_scf.get_fock()
+    eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+
+    return loc_coeff, eps_local
+
+
 def run_pyscf(molecule,
               nat_orb=False,
               loc_boys=False,
@@ -246,157 +334,102 @@ def run_pyscf(molecule,
         molecule: The updated PyscfMolecularData object. Note the attributes
         of the input molecule are also updated in this function.
     """
-    n_orbitals_max = n_orbitals
-
-    # Prepare pyscf molecule.
+    # ------------------------------------------------------------------
+    # Build PySCF molecule and get basic properties
+    # ------------------------------------------------------------------
     pyscf_molecule = prepare_pyscf_molecule(molecule)
     molecule.n_orbitals = int(pyscf_molecule.nao_nr())
     molecule.nuclear_repulsion = float(pyscf_molecule.energy_nuc())
 
-    if nat_orb:
-        print('----------------------')
-        print('UHF calculation with stabilization, then finding NOs ')
-        print('Using guessed mixed as initial point') if guess_mix else print('Not using guessed mixed')
-        print('----------------------')
-    else:
-        print('----------------------')
-        print('RHF calculation')
-        print('----------------------')
-
-    # Run SCF.
-    if nat_orb:
-        # UHF calculation
-        pyscf_scf = scf.UHF(pyscf_molecule)
-
-        # parameters
-        pyscf_scf.conv_tol = 1e-6
-        # pyscf_scf.conv_tol_grad = numpy.sqrt(1e-6)
-        # pyscf_scf.direct_scf_tol = 1e-13
-        pyscf_scf.verbose = 0
-
-        # define initial guess
-        dm = mixed_orbitals_density_matrix(pyscf_molecule) if guess_mix else None
-
-        # stability analysis
-        max_attempts = 5
-        max_mo_diff = 1e-5
-
-        if verbose:
-            print('Starting stability analysis')
-        for j in range(max_attempts):
-            if verbose:
-                print("Rotating orbitals to find stable solution: attempt %d." % (j + 1))
-
-            pyscf_scf = pyscf_scf.run(dm)
-            ref_mo = pyscf_scf.mo_coeff
-            energies_uhf = pyscf_scf.mo_energy
-
-            new_mo = pyscf_scf.stability()[0]
-            mo_diff = numpy.linalg.norm(ref_mo[0] - new_mo[0]) + \
-                      numpy.linalg.norm(ref_mo[1] - new_mo[1])
-
-            if verbose:
-                print('mo_diff: {:10.6e}'.format(mo_diff) + ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*pyscf_scf.spin_square()))
-            spin = pyscf_scf.spin_square()
-            dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
-
-            if mo_diff < max_mo_diff:
-                print("SCF solution is internally stable.")
-                break
-
-            if j+1 >= max_attempts:
-                print("Unable to find a stable SCF solution after {} attempts.".format(max_attempts))
-
-        if verbose:
-            print('The spin of the wavefuction is' ' S^2: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
-            print('----------------------')
-
-        # Calculation of natural orbitals
-        dm_tot = dm[0] + dm[1]
-        overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
-        nat_occ, nat_coeff = scipy.linalg.eigh(a=dm_tot, b=overlap_matrix, type=2)
-
-        # Ordering by occupancies
-        nat_occ = nat_occ[::-1]
-        idx = nat_occ.argsort()
-        nat_coeff = nat_coeff[:, idx]
-        if verbose:
-            print('ENERGY UHF CALCULATED', pyscf_scf.e_tot)
-
+    # ------------------------------------------------------------------
+    # RHF/ROHF reference calculation
+    # ------------------------------------------------------------------
     pyscf_scf = compute_scf(pyscf_molecule)
-
-    # redefine n_orbitals and n_electrons to match output active space
-    n_orbitals_hf = molecule.n_orbitals
-
-    molecule.hf_electrons = molecule.n_electrons
-    if n_orbitals is None:
-        n_orbitals = n_orbitals_hf
-
-    if n_orbitals > n_orbitals_hf:
-        n_orbitals = n_orbitals_hf
-
-    molecule.n_orbitals = n_orbitals - frozen_core
-    molecule.n_electrons = molecule.n_electrons - frozen_core*2
-    molecule.n_qubits = 2 * molecule.n_orbitals
-
     pyscf_scf.verbose = 0
     pyscf_scf.run()
 
+    molecule.hf_electrons = molecule.n_electrons
     molecule.hf_energy = float(pyscf_scf.e_tot)
+
     if verbose:
-        print('RESTRICTED Hartree-Fock energy for {} ({} electrons) is {}.'.format(
+        print('Restricted Hartree-Fock energy for {} ({} electrons) is {}.'.format(
             molecule.name, molecule.hf_electrons, molecule.hf_energy))
 
-    # Hold pyscf data in molecule. They are required to compute density
-    # matrices and other quantities.
-    molecule._pyscf_data = pyscf_data = {}
-    pyscf_data['mol'] = pyscf_molecule
-    pyscf_data['scf'] = pyscf_scf
+    # ------------------------------------------------------------------
+    # Resolve active-space size
+    # ------------------------------------------------------------------
+    n_orbitals_hf = molecule.n_orbitals
+    if n_orbitals is None:
+        n_orbitals = n_orbitals_hf
+    n_orbitals = min(n_orbitals, n_orbitals_hf)   # cannot exceed full space
 
-    # Populate fields.
+    molecule.n_orbitals = n_orbitals - frozen_core
+    molecule.n_electrons = molecule.n_electrons - frozen_core * 2
+    molecule.n_qubits = 2 * molecule.n_orbitals
+
+    if molecule.n_electrons < 0:
+        raise ValueError('Cannot freeze more electrons than are present.')
+    if molecule.n_orbitals < 0:
+        raise ValueError('n_orbitals must be larger than frozen_core.')
+
+    frozen_orbitals = list(range(frozen_core))
+    if n_orbitals is not None:
+        frozen_orbitals += list(range(n_orbitals, n_orbitals_hf))
+
+
+    # ------------------------------------------------------------------
+    # Choose orbital basis (natural / Boys-localized / canonical)
+    # ------------------------------------------------------------------
     if nat_orb:
+        nat_coeff, nat_occ = _compute_natural_orbitals(pyscf_molecule,
+                                                       guess_mix=guess_mix,
+                                                       verbose=verbose
+                                                       )
+
         molecule.canonical_orbitals = nat_coeff.astype(float)
         molecule.orbital_energies = nat_occ.astype(float)
         pyscf_scf.mo_coeff = molecule.canonical_orbitals
-    # localize boys
-    elif loc_boys:
-        from pyscf import lo
-        if verbose:
-            print('Localized orbitals with Boys')
 
-        loc_coeff= lo.orth_ao(pyscf_scf, 'nao')
-        F = pyscf_scf.get_fock()
-        eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+    elif loc_boys:
+        loc_coeff, eps_local = _compute_boys_loc_orbitals(pyscf_scf,
+                                                          verbose=verbose
+                                                          )
 
         molecule.canonical_orbitals = loc_coeff.astype(float)
         molecule.orbital_energies = eps_local.astype(float)
+        pyscf_scf.mo_coeff = molecule.canonical_orbitals
+
     else:
         molecule.canonical_orbitals = pyscf_scf.mo_coeff.astype(float)
         molecule.orbital_energies = pyscf_scf.mo_energy.astype(float)
 
+    # ------------------------------------------------------------------
+    # Store PySCF objects for later reuse
+    # ------------------------------------------------------------------
+    molecule._pyscf_data = pyscf_data = {
+        'mol': pyscf_molecule,
+        'scf': pyscf_scf,
+    }
+
+    # ------------------------------------------------------------------
+    # Compute molecular integrals (frozen-core / full)
+    # ------------------------------------------------------------------
     molecule.casci_energy = None
-    if frozen_core > 0 or n_orbitals is not None:
 
-
-        # get CASCI MO effective integrals (frozen core)
-        n_cas_elec = molecule.n_electrons
-
-        if n_cas_elec < 0:
-            raise Exception('cannot freeze more electrons than orbitals')
-
-        if molecule.n_orbitals < 0:
-            raise Exception('n_orbital should be larger than frozen_core')
-
-        casci = mcscf.CASCI(pyscf_scf, molecule.n_orbitals, n_cas_elec)
+    if frozen_core > 0 or n_orbitals < n_orbitals_hf:
+        casci = mcscf.CASCI(pyscf_scf, molecule.n_orbitals, molecule.n_electrons)
         pyscf_data['casci'] = casci
 
         if run_casci:
             molecule.casci_energy = casci.kernel()[0]
+            if verbose:
+                print('CASCI energy for {} ({} electrons) is {}.'.format(
+                    molecule.name, molecule.hf_electrons, molecule.casci_energy))
+
 
         one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, molecule.n_orbitals)
         molecule.nuclear_repulsion = nuclear
     else:
-        # Get MO integrals.
         one_body_integrals, two_body_integrals = compute_integrals(pyscf_molecule, molecule.canonical_orbitals)
 
     molecule.one_body_integrals = one_body_integrals
@@ -408,7 +441,9 @@ def run_pyscf(molecule,
         if molecule.multiplicity != 1:
             print("WARNING: RO-MP2 is not available in PySCF.")
         else:
-            pyscf_mp2 = mp.MP2(pyscf_scf)
+            #frozen_orbitals = None
+            pyscf_mp2 = mp.MP2(pyscf_scf, frozen=frozen_orbitals)
+
             pyscf_mp2.verbose = 0
             pyscf_mp2.run()
             # molecule.mp2_energy = pyscf_mp2.e_tot  # pyscf-1.4.4 or higher
@@ -431,10 +466,6 @@ def run_pyscf(molecule,
 
     # Run CCSD.
     if run_ccsd:
-        frozen_orbitals = list(range(frozen_core))
-
-        if n_orbitals is not None:
-            frozen_orbitals += list(range(n_orbitals, n_orbitals_hf))
 
         # print('frozen CCSD orbitals: ', frozen_orbitals)
         pyscf_ccsd = cc.CCSD(pyscf_scf, frozen=frozen_orbitals)
@@ -443,7 +474,7 @@ def run_pyscf(molecule,
         molecule.ccsd_energy = pyscf_ccsd.e_tot
         if verbose:
             print('CCSD energy for {} ({} electrons) is {}.'.format(
-                molecule.name, molecule.n_electrons, molecule.ccsd_energy))
+                molecule.name, molecule.hf_electrons, molecule.ccsd_energy))
 
         if isinstance(pyscf_scf, scf.rohf.ROHF):
             import warnings
