@@ -319,16 +319,16 @@ def _compute_natural_orbitals(pyscf_molecule,
     return nat_coeff, nat_occ
 
 
-def _compute_boys_loc_orbitals(pyscf_scf, verbose=False):
+def _compute_atomic_loc_orbitals(pyscf_scf, verbose=False):
     """
-    compute localized orbitals using boys
+    compute localized orthogonal atomic orbitals
 
     loc_coeff : ndarray   Boys localized orbital coefficients (columns).
     eps_local : ndarray   Boys localized orbital energies (descending).
 
     """
     if verbose:
-        print('Localized orbitals with Boys')
+        print('Localized orthogonal atomic orbitals')
 
     from pyscf import lo
     loc_coeff = lo.orth_ao(pyscf_scf, 'nao')
@@ -338,9 +338,63 @@ def _compute_boys_loc_orbitals(pyscf_scf, verbose=False):
     return loc_coeff, eps_local
 
 
+def _compute_boys_loc_orbitals(pyscf_scf, n_frozen, n_orbitals, verbose=False):
+    """
+    compute localized orbitals using Boys
+
+    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
+    eps_local : ndarray   Boys localized orbital energies (descending).
+
+    """
+
+    if verbose:
+        print('Localized orbitals with Boys')
+
+    from pyscf import lo
+
+    C_core = pyscf_scf.mo_coeff[:, :n_frozen]
+    C_active = lo.Boys(pyscf_scf.mol, pyscf_scf.mo_coeff[:, n_frozen:n_orbitals]).kernel()
+    C_virtual = pyscf_scf.mo_coeff[:, n_orbitals:]
+    loc_coeff = numpy.hstack((C_core, C_active, C_virtual))
+
+    F = pyscf_scf.get_fock()
+    eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+
+    return loc_coeff, eps_local
+
+
+def _compute_pipek_loc_orbitals(pyscf_scf, n_frozen, n_orbitals, verbose=False):
+    """
+    compute localized orbitals using Pipek-Mezey
+
+    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
+    eps_local : ndarray   Boys localized orbital energies (descending).
+
+    """
+
+    if verbose:
+        print('Localized orbitals with Pipek-Mezey')
+
+    from pyscf import lo
+
+    #loc_coeff = lo.PM(pyscf_scf.mol, pyscf_scf.mo_coeff).kernel()
+
+    C_core = pyscf_scf.mo_coeff[:, :n_frozen]
+    C_active = lo.PM(pyscf_scf.mol, pyscf_scf.mo_coeff[:, n_frozen:n_orbitals]).kernel()
+    C_virtual = pyscf_scf.mo_coeff[:, n_orbitals:]
+    loc_coeff = numpy.hstack((C_core, C_active, C_virtual))
+
+    F = pyscf_scf.get_fock()
+    eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+
+    return loc_coeff, eps_local
+
+
 def run_pyscf(molecule,
               nat_orb=False,
               loc_boys=False,
+              loc_pipek=False,
+              loc_atomic=False,
               guess_mix=False,
               frozen_core=0,
               n_orbitals=None,
@@ -432,8 +486,30 @@ def run_pyscf(molecule,
 
     elif loc_boys:
         loc_coeff, eps_local = _compute_boys_loc_orbitals(pyscf_scf,
+                                                          frozen_core,
+                                                          n_orbitals,
                                                           verbose=verbose
                                                           )
+
+        molecule.canonical_orbitals = loc_coeff.astype(float)
+        molecule.orbital_energies = eps_local.astype(float)
+        pyscf_scf.mo_coeff = molecule.canonical_orbitals
+
+    elif loc_pipek:
+        loc_coeff, eps_local = _compute_pipek_loc_orbitals(pyscf_scf,
+                                                           frozen_core,
+                                                           n_orbitals,
+                                                           verbose=verbose,
+                                                          )
+
+        molecule.canonical_orbitals = loc_coeff.astype(float)
+        molecule.orbital_energies = eps_local.astype(float)
+        pyscf_scf.mo_coeff = molecule.canonical_orbitals
+
+    elif loc_atomic:
+        loc_coeff, eps_local = _compute_atomic_loc_orbitals(pyscf_scf,
+                                                            verbose=verbose,
+                                                            )
 
         molecule.canonical_orbitals = loc_coeff.astype(float)
         molecule.orbital_energies = eps_local.astype(float)
