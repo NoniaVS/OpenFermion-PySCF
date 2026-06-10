@@ -250,6 +250,22 @@ def set_mo_coefficients(molecule, mo_coefficients):
     molecule._canonical_orbitals = mo_coefficients
 
 
+def store_orbitals_in_molden(molecule, filename='orbitals.molden'):
+    """
+    store the orbitals in molden format
+    Args:
+        molecule: MolecularData object
+        filename: molden formatted file name
+
+    """
+    from pyscf.tools import molden
+
+    mol = molecule._pyscf_data['mol']
+    pyscf = molecule._pyscf_data['scf']
+    # molden.from_mo(mol, filename, pyscf.mo_coeff)
+    molden.from_scf(pyscf, filename )
+
+
 def _compute_natural_orbitals(pyscf_molecule,
                                guess_mix=False,
                                verbose=False,

@@ -20,7 +20,8 @@ from ._run_pyscf import (
         generate_molecular_hamiltonian,
         prepare_pyscf_molecule,
         run_pyscf,
-        set_mo_coefficients
+        set_mo_coefficients,
+        store_orbitals_in_molden
         )
 
 from ._version import __version__
