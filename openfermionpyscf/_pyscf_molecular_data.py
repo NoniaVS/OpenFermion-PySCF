@@ -285,15 +285,37 @@ class PyscfMolecularData(MolecularData):
         return self._ccsd_double_amps
 
     @property
-    def canonical_natural_trans_mat(self):
-        r""" 1rdm transformation matrix between natural orbitals and canonical
-        orbitals basis [Canonical -> Natural]
-        nat_one_rdm = trans_mat @ canonical_one_rdm @ trans_mat.T
+    def canonical_local_trans_mat_(self):
+        r""" 1rdm transformation matrix between localized orbitals and canonical
+        orbitals basis [Canonical -> Localized]
+        loc_one_rdm = trans_mat @ canonical_one_rdm @ trans_mat.T
         """
-        nat_orb = self.canonical_orbitals
-        can_orb = self._pyscf_data['scf'].mo_coeff
+
+        loc_orb = self._pyscf_data['scf'].mo_coeff
+        can_orb = self._pyscf_data['ref_scf'].mo_coeff
+
+        overlap_matrix = self._pyscf_data['ref_scf'].get_ovlp(self._pyscf_data['mol'])
+        trans_mat = numpy.dot(loc_orb.T, overlap_matrix @ can_orb)
+
+        active_orbitals = self._pyscf_data['active_space']
+        return trans_mat[numpy.ix_(active_orbitals, active_orbitals)]
+
+    @property
+    def canonical_local_trans_mat(self):
+        r""" 1rdm transformation matrix between localized orbitals and canonical
+        orbitals basis [Canonical -> Localized], defined within the active space.
+        loc_one_rdm = trans_mat @ canonical_one_rdm @ trans_mat.T
+        """
+
+        active_orbitals = self._pyscf_data['active_space']
+
+        # Agafem només els orbitals de l'espai actiu
+        loc_orb = self._pyscf_data['scf'].mo_coeff[:, active_orbitals]   # (n_AO, n_active)
+        can_orb = self._pyscf_data['ref_scf'].mo_coeff[:, active_orbitals]  # (n_AO, n_active)
 
         overlap_matrix = self._pyscf_data['scf'].get_ovlp(self._pyscf_data['mol'])
-        trans_mat = numpy.dot(nat_orb.T, overlap_matrix @ can_orb)
 
-        return trans_mat
+        # Transformació restringida a l'espai actiu: (n_active, n_active)
+        trans_mat = loc_orb.T @ overlap_matrix @ can_orb
+
+        return trans_mat.T

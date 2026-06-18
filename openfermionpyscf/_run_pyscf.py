@@ -465,6 +465,8 @@ def run_pyscf(molecule,
         print('Restricted reference energy for {} ({} electrons) is {}.'.format(
             molecule.name, molecule.hf_electrons, molecule.hf_energy))
 
+    from copy import deepcopy
+    ref_scf = deepcopy(pyscf_scf)
     # ------------------------------------------------------------------
     # Resolve active-space size
     # ------------------------------------------------------------------
@@ -485,6 +487,7 @@ def run_pyscf(molecule,
     frozen_orbitals = list(range(frozen_core))
     if n_orbitals is not None:
         frozen_orbitals += list(range(n_orbitals, n_orbitals_hf))
+    active_orbitals = list(range(frozen_core, n_orbitals))
 
 
     # ------------------------------------------------------------------
@@ -541,6 +544,8 @@ def run_pyscf(molecule,
     molecule._pyscf_data = pyscf_data = {
         'mol': pyscf_molecule,
         'scf': pyscf_scf,
+        'ref_scf': ref_scf,
+        'active_space': active_orbitals
     }
 
     # ------------------------------------------------------------------
@@ -548,7 +553,7 @@ def run_pyscf(molecule,
     # ------------------------------------------------------------------
     molecule.casci_energy = None
 
-    if frozen_core > 0 or n_orbitals < n_orbitals_hf:
+    if frozen_core > 0 or n_orbitals < n_orbitals_hf or run_casci:
         casci = mcscf.CASCI(pyscf_scf, molecule.n_orbitals, molecule.n_electrons)
         pyscf_data['casci'] = casci
 
