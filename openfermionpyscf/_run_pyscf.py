@@ -262,7 +262,7 @@ def store_orbitals_in_molden(molecule, filename='orbitals.molden'):
 
     mol = molecule._pyscf_data['mol']
     pyscf = molecule._pyscf_data['scf']
-    # molden.from_mo(mol, filename, pyscf.mo_coeff)
+    #molden.from_mo(mol, filename, pyscf.mo_coeff)
     molden.from_scf(pyscf, filename )
 
 
@@ -566,6 +566,7 @@ def run_pyscf(molecule,
 
         one_body_integrals, two_body_integrals, nuclear = compute_integrals_casci(casci, molecule.n_orbitals)
         molecule.nuclear_repulsion = nuclear
+        molecule.canonical_orbitals = molecule.canonical_orbitals.T[frozen_core:n_orbitals].T
     else:
         one_body_integrals, two_body_integrals = compute_integrals(pyscf_molecule, molecule.canonical_orbitals)
 
