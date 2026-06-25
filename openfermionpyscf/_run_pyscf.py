@@ -414,6 +414,7 @@ def run_pyscf(molecule,
               guess_mix=False,
               frozen_core=0,
               n_orbitals=None,
+              permute_orbitals=(),
               run_scf=True,
               reference='HF',
               run_mp2=False,
@@ -465,8 +466,20 @@ def run_pyscf(molecule,
         print('Restricted reference energy for {} ({} electrons) is {}.'.format(
             molecule.name, molecule.hf_electrons, molecule.hf_energy))
 
+    # ------------------------------------------------------------------
+    # Resolve orbital permutation
+    # ------------------------------------------------------------------
+    for pair in permute_orbitals:
+        pair = list(pair)
+        pair_flip = list(pair)[::-1]
+        print('exchange pair {}'.format(pair))
+        pyscf_scf.mo_coeff[:, pair] = pyscf_scf.mo_coeff[:, pair_flip]
+        pyscf_scf.mo_energy[pair] = pyscf_scf.mo_energy[pair_flip]
+        pyscf_scf.mo_occ[pair] = pyscf_scf.mo_occ[pair_flip]
+
     from copy import deepcopy
     ref_scf = deepcopy(pyscf_scf)
+
     # ------------------------------------------------------------------
     # Resolve active-space size
     # ------------------------------------------------------------------
