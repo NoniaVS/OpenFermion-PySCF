@@ -285,22 +285,6 @@ class PyscfMolecularData(MolecularData):
         return self._ccsd_double_amps
 
     @property
-    def canonical_local_trans_mat_(self):
-        r""" 1rdm transformation matrix between localized orbitals and canonical
-        orbitals basis [Canonical -> Localized]
-        loc_one_rdm = trans_mat @ canonical_one_rdm @ trans_mat.T
-        """
-
-        loc_orb = self._pyscf_data['scf'].mo_coeff
-        can_orb = self._pyscf_data['ref_scf'].mo_coeff
-
-        overlap_matrix = self._pyscf_data['ref_scf'].get_ovlp(self._pyscf_data['mol'])
-        trans_mat = numpy.dot(loc_orb.T, overlap_matrix @ can_orb)
-
-        active_orbitals = self._pyscf_data['active_space']
-        return trans_mat[numpy.ix_(active_orbitals, active_orbitals)]
-
-    @property
     def canonical_local_trans_mat(self):
         r""" 1rdm transformation matrix between localized orbitals and canonical
         orbitals basis [Canonical -> Localized], defined within the active space.
@@ -319,3 +303,23 @@ class PyscfMolecularData(MolecularData):
         trans_mat = loc_orb.T @ overlap_matrix @ can_orb
 
         return trans_mat.T
+
+    @property
+    def orbital_centers(self):
+        r"""
+        returns the orbitals centers in angstrom
+        """
+        BOHR_TO_ANGS = 1 / 1.88972
+
+        dip_ao = self._pyscf_data['mol'].intor_symmetric("int1e_r", comp=3)
+        C_loc = self.canonical_orbitals
+        # print('shape: ', C_loc.shape)
+
+        centers = numpy.zeros((C_loc.shape[1], 3))
+
+        for k in range(3):
+            dip_mo = C_loc.T @ dip_ao[k] @ C_loc
+            centers[:, k] = numpy.diag(dip_mo) * BOHR_TO_ANGS
+
+        print(centers)
+        return centers
