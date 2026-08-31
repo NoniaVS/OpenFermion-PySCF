@@ -637,12 +637,13 @@ def run_pyscf(molecule,
 
     # Run FCI.
     if run_fci:
-        pyscf_fci = fci.FCI(pyscf_molecule, pyscf_scf.mo_coeff)
-        spin = (molecule.multiplicity - 1)//2
-        pyscf_fci.spin = spin # s2 s(s+1)
-        s2 = spin*(spin+1)
+        pyscf_fci = fci.FCI(pyscf_molecule, molecule.canonical_orbitals)
+        spin = (molecule.multiplicity - 1)/2
+        pyscf_fci.spin = int(2 * spin)
+        s2 = spin * (spin + 1)
 
-        fci.addons.fix_spin_(pyscf_fci, shift=0.1, ss=s2)  # s2
+        fci.addons.fix_spin_(pyscf_fci, shift=0.1, ss=s2)
+        # s2
         molecule.fci_energy, fcivec = pyscf_fci.kernel()
         pyscf_data['fci'] = pyscf_fci
         if verbose:
