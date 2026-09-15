@@ -339,8 +339,8 @@ def _compute_atomic_loc_orbitals(pyscf_scf, verbose=False):
     """
     compute localized orthogonal atomic orbitals
 
-    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
-    eps_local : ndarray   Boys localized orbital energies (descending).
+    loc_coeff : ndarray   atomic localized orbital coefficients (columns).
+    eps_local : ndarray   atomic localized orbital energies (descending).
 
     """
     if verbose:
@@ -354,52 +354,79 @@ def _compute_atomic_loc_orbitals(pyscf_scf, verbose=False):
     return loc_coeff, eps_local
 
 
-def _compute_boys_loc_orbitals(pyscf_scf, n_frozen, n_orbitals, verbose=False):
+def _compute_loc_orbitals(pyscf_scf, n_frozen, n_orbitals,
+                          separate_occ_vir=False,
+                          verbose=False,
+                          method: str='PM',
+                          method_virtuals: [str, None]=None):
     """
-    compute localized orbitals using Boys
+    compute localized orbitals
 
-    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
-    eps_local : ndarray   Boys localized orbital energies (descending).
+    loc_coeff : ndarray   localized orbital coefficients (columns).
+    eps_local : ndarray   localized orbital energies (descending).
+    separate_occ_vir: whether to separate occupied and virtual orbitals during localization
+    method: method used to localize orbitals
+    method_virtuals: method used to localize virtual orbitals. If None use the same as method
+
 
     """
-
     if verbose:
-        print('Localized orbitals with Boys')
+        if separate_occ_vir:
+            print("Localized orbitals with {}".format(method, method_virtuals))
+            print("  Occupied and virtual orbitals localized separately")
+        else:
+            print("Localized orbitals with {}".format(method))
 
     from pyscf import lo
 
-    C_core = pyscf_scf.mo_coeff[:, :n_frozen]
-    C_active = lo.Boys(pyscf_scf.mol, pyscf_scf.mo_coeff[:, n_frozen:n_orbitals]).kernel()
-    C_virtual = pyscf_scf.mo_coeff[:, n_orbitals:]
-    loc_coeff = numpy.hstack((C_core, C_active, C_virtual))
+    methods = {'pm': lo.PM, 'boys': lo.Boys, 'er': lo.ER}
 
-    F = pyscf_scf.get_fock()
-    eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
+    loc_function = methods[method.lower()]
 
-    return loc_coeff, eps_local
+    if method_virtuals is None:
+        loc_function_virt = loc_function
+    else:
+        loc_function_virt = methods[method_virtuals.lower()]
 
+    mo_coeff = pyscf_scf.mo_coeff
+    mo_occ = pyscf_scf.mo_occ
 
-def _compute_pipek_loc_orbitals(pyscf_scf, n_frozen, n_orbitals, verbose=False):
-    """
-    compute localized orbitals using Pipek-Mezey
+    # Frozen core orbitals
+    C_core = mo_coeff[:, :n_frozen]
 
-    loc_coeff : ndarray   Boys localized orbital coefficients (columns).
-    eps_local : ndarray   Boys localized orbital energies (descending).
+    # Active orbitals
+    C_active = mo_coeff[:, n_frozen:n_orbitals]
 
-    """
+    if separate_occ_vir:
+        # Identify occupied and virtual orbitals within the active space
+        active_occ = mo_occ[n_frozen:n_orbitals] > 0
+        active_vir = ~active_occ
 
-    if verbose:
-        print('Localized orbitals with Pipek-Mezey')
+        C_occ = C_active[:, active_occ]
+        C_vir = C_active[:, active_vir]
 
-    from pyscf import lo
+        # Localize occupied and virtual subspaces independently
+        if C_occ.shape[1] > 0:
+            C_occ_loc = loc_function(pyscf_scf.mol, C_occ).kernel()
+        else:
+            C_occ_loc = C_occ
 
-    #loc_coeff = lo.PM(pyscf_scf.mol, pyscf_scf.mo_coeff).kernel()
+        if C_vir.shape[1] > 0:
+            C_vir_loc = loc_function_virt(pyscf_scf.mol, C_vir).kernel()
+        else:
+            C_vir_loc = C_vir
 
-    C_core = pyscf_scf.mo_coeff[:, :n_frozen]
-    C_active = lo.PM(pyscf_scf.mol, pyscf_scf.mo_coeff[:, n_frozen:n_orbitals]).kernel()
-    C_virtual = pyscf_scf.mo_coeff[:, n_orbitals:]
-    loc_coeff = numpy.hstack((C_core, C_active, C_virtual))
+        # Reconstruct active space
+        C_active_loc = numpy.hstack((C_occ_loc, C_vir_loc))
 
+    else:
+        # Localize all active orbitals together
+        C_active_loc = loc_function(pyscf_scf.mol, C_active).kernel()
+
+    # Complete set of orbitals
+    loc_coeff = numpy.hstack((C_core, C_active_loc, mo_coeff[:, n_orbitals:]))
+
+    # Project the Fock matrix onto the localized orbitals
     F = pyscf_scf.get_fock()
     eps_local = numpy.einsum('pi,ij,pj->p', loc_coeff, F, loc_coeff)
 
@@ -410,6 +437,7 @@ def run_pyscf(molecule,
               nat_orb=False,
               loc_boys=False,
               loc_pipek=False,
+              loc_er=False,
               loc_atomic=False,
               guess_mix=False,
               frozen_core=0,
@@ -516,23 +544,18 @@ def run_pyscf(molecule,
         molecule.orbital_energies = nat_occ.astype(float)
         pyscf_scf.mo_coeff = molecule.canonical_orbitals
 
-    elif loc_boys:
-        loc_coeff, eps_local = _compute_boys_loc_orbitals(pyscf_scf,
-                                                          frozen_core,
-                                                          n_orbitals,
-                                                          verbose=verbose
-                                                          )
+    if loc_boys or loc_pipek or loc_er:
 
-        molecule.canonical_orbitals = loc_coeff.astype(float)
-        molecule.orbital_energies = eps_local.astype(float)
-        pyscf_scf.mo_coeff = molecule.canonical_orbitals
+        method = 'boys' if loc_boys else 'PM' if loc_pipek else 'ER'
 
-    elif loc_pipek:
-        loc_coeff, eps_local = _compute_pipek_loc_orbitals(pyscf_scf,
-                                                           frozen_core,
-                                                           n_orbitals,
-                                                           verbose=verbose,
-                                                          )
+        loc_coeff, eps_local = _compute_loc_orbitals(pyscf_scf,
+                                                     frozen_core,
+                                                     n_orbitals,
+                                                     separate_occ_vir=False,
+                                                     method=method,
+                                                     method_virtuals=None,
+                                                     verbose=verbose,
+                                                     )
 
         molecule.canonical_orbitals = loc_coeff.astype(float)
         molecule.orbital_energies = eps_local.astype(float)
