@@ -523,10 +523,10 @@ def run_pyscf(molecule,
         # Use orbitals from a restricted or open-shell restricted calculation
         if reference == 'HF':
             print('Use RHF reference')
-            pyscf_scf = compute_scf(pyscf_molecule)  # HF
+            pyscf_scf = compute_scf(pyscf_molecule, verbose=verbose)  # HF
         elif reference == 'DFT':
             print('Use RDFT reference')
-            pyscf_scf = compute_scf_dft(pyscf_molecule) # DFT
+            pyscf_scf = compute_scf_dft(pyscf_molecule, verbose=verbose) # DFT
         else:
             raise ValueError('Unknown reference calculation: {}'.format(reference))
 
