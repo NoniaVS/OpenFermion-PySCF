@@ -321,5 +321,4 @@ class PyscfMolecularData(MolecularData):
             dip_mo = C_loc.T @ dip_ao[k] @ C_loc
             centers[:, k] = numpy.diag(dip_mo) * BOHR_TO_ANGS
 
-        print(centers)
         return centers

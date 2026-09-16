@@ -45,7 +45,7 @@ def prepare_pyscf_molecule(molecule):
     return pyscf_molecule
 
 
-def compute_scf(pyscf_molecule):
+def compute_scf(pyscf_molecule, unrestricted=False, verbose=0):
     """
     Perform a Hartree-Fock calculation.
 
@@ -55,18 +55,22 @@ def compute_scf(pyscf_molecule):
     Returns:
         pyscf_scf: A PySCF "SCF" calculation object.
     """
-    if pyscf_molecule.spin:
-        pyscf_scf = scf.ROHF(pyscf_molecule)
+    if unrestricted:
+        pyscf_scf = scf.UHF(pyscf_molecule)
     else:
-        pyscf_scf = scf.RHF(pyscf_molecule)
+        if pyscf_molecule.spin:
+            pyscf_scf = scf.ROHF(pyscf_molecule)
+        else:
+            pyscf_scf = scf.RHF(pyscf_molecule)
 
-    pyscf_scf.verbose = 0
+    pyscf_scf.conv_tol = 1e-6
+    pyscf_scf.verbose = verbose
     pyscf_scf.run()
 
     return pyscf_scf
 
 
-def compute_scf_dft(pyscf_molecule):
+def compute_scf_dft(pyscf_molecule, unrestricted=False, verbose=0):
     """
     Perform a DFT calculation.
 
@@ -78,19 +82,32 @@ def compute_scf_dft(pyscf_molecule):
     """
     from pyscf import dft
 
-    if pyscf_molecule.spin:
-        pyscf_dft = dft.ROKS(pyscf_molecule)
+
+    if unrestricted:
+        pyscf_dft = dft.UKS(pyscf_molecule)
+
     else:
-        pyscf_dft = dft.RKS(pyscf_molecule)
+        if pyscf_molecule.spin:
+            pyscf_dft = dft.ROKS(pyscf_molecule)
+        else:
+            pyscf_dft = dft.RKS(pyscf_molecule)
 
     # Additional paramters
     pyscf_dft.xc = 'lda,vwn'  # default
-    pyscf_dft = pyscf_dft.newton()  # second-order algortihm
+    # pyscf_dft.xc = 'TPSSh'  # default
+    # pyscf_dft = pyscf_dft.newton()  # second-order algortihm
 
-    pyscf_dft.verbose = 0
+    pyscf_dft.conv_tol = 1e-10
+    pyscf_dft.conv_tol_grad = 1e-7
+    pyscf_dft.max_cycle = 300
+    pyscf_dft.grids.level = 6
+    pyscf_dft.grids.prune = None
+
+    pyscf_dft.verbose = verbose
     pyscf_dft.run()
 
     # convert to SCF
+    pyscf_dft.with_x2c = None
     pyscf_scf = pyscf_dft.to_hf()
 
     return pyscf_scf
@@ -266,28 +283,12 @@ def store_orbitals_in_molden(molecule, filename='orbitals.molden'):
     molden.from_scf(pyscf, filename )
 
 
-def _compute_natural_orbitals(pyscf_molecule,
-                               guess_mix=False,
-                               verbose=False,
-                               max_attempts=5,
-                               max_mo_diff=1e-5):
-    """
-    Run a UHF calculation with stability analysis and return natural orbitals.
+def _stability_analysis(pyscf_scf, guess_mix=False, verbose=False, max_attempts=5, max_mo_diff=1e-5):
 
-    Returns
-    -------
-    nat_coeff : ndarray   Natural-orbital coefficients (columns), ordered by
-                          descending occupation.
-    nat_occ   : ndarray   Natural-orbital occupancies (descending).
-    """
-    pyscf_scf = scf.UHF(pyscf_molecule)
-    pyscf_scf.conv_tol = 1e-6
-    pyscf_scf.verbose = 0
-
-    dm = mixed_orbitals_density_matrix(pyscf_molecule) if guess_mix else None
+    dm = mixed_orbitals_density_matrix(pyscf_scf.mol) if guess_mix else None
 
     if verbose:
-        print('Starting UHF stability analysis')
+        print('Starting unrestricted stability analysis')
 
     for attempt in range(1, max_attempts + 1):
         if verbose:
@@ -307,7 +308,8 @@ def _compute_natural_orbitals(pyscf_molecule,
         dm = pyscf_scf.make_rdm1(new_mo, pyscf_scf.mo_occ)
 
         if mo_diff < max_mo_diff:
-            print('SCF solution is internally stable.')
+            if verbose:
+                print('SCF solution is internally stable.')
             break
     else:
         print(f'Unable to find a stable SCF solution after {max_attempts} attempts.')
@@ -315,10 +317,28 @@ def _compute_natural_orbitals(pyscf_molecule,
     if verbose:
         print('Final spin  S²: {:5.3f}  2S+1: {:5.3f}'.format(*spin))
 
+    pyscf_scf.mo_coeff = new_mo
+    return pyscf_scf
 
-    # Natural orbitals from the UHF density matrix
+
+def _compute_natural_orbitals(pyscf_scf, guess_mix=False, verbose=False):
+    """
+    Return natural orbitals.
+
+    Returns
+    -------
+    nat_coeff : ndarray   Natural-orbital coefficients (columns), ordered by
+                          descending occupation.
+    nat_occ   : ndarray   Natural-orbital occupancies (descending).
+    """
+
+
+    # Natural orbitals from the unrestricted density matrix
     if verbose:
-        print('Natural orbitals from UHF')
+        print('Natural orbitals from unrestricted WF')
+
+    pyscf_molecule = pyscf_scf.mol
+    dm = pyscf_scf.make_rdm1(pyscf_scf.mo_coeff, pyscf_scf.mo_occ)
 
     dm_tot = dm[0] + dm[1]
     overlap_matrix = pyscf_scf.get_ovlp(pyscf_molecule)
@@ -330,7 +350,7 @@ def _compute_natural_orbitals(pyscf_molecule,
     nat_coeff = nat_coeff[:, order]
 
     if verbose:
-        print(f'UHF total energy: {pyscf_scf.e_tot}')
+        print(f'total energy: {pyscf_scf.e_tot}')
 
     return nat_coeff, nat_occ
 
@@ -478,14 +498,37 @@ def run_pyscf(molecule,
     # ------------------------------------------------------------------
     # Reference calculation
     # ------------------------------------------------------------------
-    if reference == 'HF':
-        print('Use HF reference')
-        pyscf_scf = compute_scf(pyscf_molecule)  # HF
-    elif reference == 'DFT':
-        print('Use DFT reference')
-        pyscf_scf = compute_scf_dft(pyscf_molecule) # DFT
+
+    if nat_orb:
+        # Use natural orbitals from an unrestricted calculation
+        if reference == 'HF':
+            print('Use UHF reference')
+            pyscf_scf = compute_scf(pyscf_molecule, unrestricted=True, verbose=verbose)  # HF
+
+        if reference == 'DFT':
+            print('Use UDFT reference')
+            pyscf_scf = compute_scf_dft(pyscf_molecule, unrestricted=True, verbose=verbose) # DFT
+
+        pyscf_scf = _stability_analysis(pyscf_scf, guess_mix=guess_mix, verbose=verbose)
+        nat_coeff, nat_occ = _compute_natural_orbitals(pyscf_scf, guess_mix=guess_mix, verbose=verbose)
+
+        pyscf_scf = pyscf_scf.to_rhf()
+
+        molecule.canonical_orbitals = nat_coeff.astype(float)
+        molecule.orbital_energies = nat_occ.astype(float)
+
+        pyscf_scf.mo_coeff = molecule.canonical_orbitals
+
     else:
-        raise ValueError('Unknown reference calculation: {}'.format(reference))
+        # Use orbitals from a restricted or open-shell restricted calculation
+        if reference == 'HF':
+            print('Use RHF reference')
+            pyscf_scf = compute_scf(pyscf_molecule)  # HF
+        elif reference == 'DFT':
+            print('Use RDFT reference')
+            pyscf_scf = compute_scf_dft(pyscf_molecule) # DFT
+        else:
+            raise ValueError('Unknown reference calculation: {}'.format(reference))
 
     molecule.hf_electrons = molecule.n_electrons
     molecule.hf_energy = float(pyscf_scf.e_tot)
@@ -530,20 +573,9 @@ def run_pyscf(molecule,
         frozen_orbitals += list(range(n_orbitals, n_orbitals_hf))
     active_orbitals = list(range(frozen_core, n_orbitals))
 
-
     # ------------------------------------------------------------------
-    # Choose orbital basis (natural / Boys-localized / canonical)
+    # Choose orbital basis ( Localized / canonical)
     # ------------------------------------------------------------------
-    if nat_orb:
-        nat_coeff, nat_occ = _compute_natural_orbitals(pyscf_molecule,
-                                                       guess_mix=guess_mix,
-                                                       verbose=verbose
-                                                       )
-
-        molecule.canonical_orbitals = nat_coeff.astype(float)
-        molecule.orbital_energies = nat_occ.astype(float)
-        pyscf_scf.mo_coeff = molecule.canonical_orbitals
-
     if loc_boys or loc_pipek or loc_er:
 
         method = 'boys' if loc_boys else 'PM' if loc_pipek else 'ER'
@@ -551,7 +583,7 @@ def run_pyscf(molecule,
         loc_coeff, eps_local = _compute_loc_orbitals(pyscf_scf,
                                                      frozen_core,
                                                      n_orbitals,
-                                                     separate_occ_vir=False,
+                                                     separate_occ_vir=True,
                                                      method=method,
                                                      method_virtuals=None,
                                                      verbose=verbose,
