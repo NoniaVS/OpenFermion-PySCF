@@ -322,3 +322,34 @@ class PyscfMolecularData(MolecularData):
             centers[:, k] = numpy.diag(dip_mo) * BOHR_TO_ANGS
 
         return centers
+
+    def get_ao_labels_chemical(self):
+        """
+        get labels of Atomic Orbitals
+
+        for x in get_ao_labels_chemical(mol):
+            print('{:3d} {:3d}   {:2s} {}'.format(x['ao'], x['atom'], x['element'], x['orbital']))
+
+        Returns: dictionary
+        """
+
+        labels = []
+        mol = self._pyscf_data['mol']
+
+        for ao in mol.ao_labels():
+            parts = ao.split()
+
+            atom = int(parts[0])
+            element = parts[1]
+            orbital = parts[2]
+
+            # Remove Cartesian component
+            shell = orbital.rstrip("xyz")
+
+            labels.append({"ao": len(labels),
+                           "atom": atom,
+                           "element": element,
+                           "orbital": shell,
+                           })
+
+        return labels
